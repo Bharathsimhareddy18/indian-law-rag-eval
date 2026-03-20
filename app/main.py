@@ -2,7 +2,7 @@ import sys
 import os
 import json
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI,BackgroundTasks
 from fastapi import APIRouter
 from fastapi import Body
 from typing import List, Dict, Any
@@ -10,11 +10,13 @@ from contextlib import asynccontextmanager
 from sentence_transformers import SentenceTransformer
 from app.data_client.bm25_client import bm25_client
 from app.data_client.faiss_client import faiss_client
+from app.utils.pre_processing import pre_process
 from app.services.bm25_retriever import bm25_retrieve
 from app.services.faiss_retriever import faiss_retrieve
 from app.services.hybrid_retirever import hybrid_retrieve
-from app.utils.pre_processing import pre_process
-from openai import AsyncClient
+from app.services.llm_eval import evaluate_store_by_llm
+from app.utils.chat import chat
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,7 +35,7 @@ async def lifespan(app: FastAPI):
     bm25_global =  bm25_client()
     faiss_global =  faiss_client()
     model_global = SentenceTransformer('all-MiniLM-L6-v2')
-    AI_client = AsyncClient()
+    AI_client = AsyncOpenAI()
     
     print("clients loaded successfully...")
     yield
@@ -50,10 +52,20 @@ def home():
         "server": "Healty"
     }
     
-@app.post("/chat")
-async def chat(query: str, history: List[Dict[str, Any]] = Body(default=[])):
+@app.post("/chatbot")
+async def chatbot(query: str, history: List[Dict[str, Any]] = Body(default=[]), background_tasks: BackgroundTasks = None):
     
     pre_processed = await pre_process(history, query, AI_client)
     
+    answer = await chat(pre_processed["history_summary"], pre_processed["standalone_query"], AI_client, bm25_retrieve, faiss_retrieve, hybrid_retrieve)
     
-    return {"results": pre_processed}
+    background_tasks.add_task(
+        evaluate_store_by_llm, 
+        query=pre_processed["standalone_query"], 
+        context=answer["retrieved_context"], 
+        answer=answer, 
+        tool_selection=answer["tool_used"],
+        client=AI_client
+    )
+    
+    return {"results": pre_processed, "answer": answer["answer"]}

@@ -1,6 +1,5 @@
 import numpy as np
 from typing import List, Dict, Any
-
 from app.data_client.bm25_client import bm25_client
 from app.data_client.data_loader import dataLoader
 
