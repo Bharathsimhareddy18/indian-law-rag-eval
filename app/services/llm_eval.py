@@ -25,7 +25,8 @@ async def evaluate_store_by_llm(query: str, answer: str, context: str, client: A
             "correctness_score": scores.get("correctness_score", 0),
             "faithfulness_score": scores.get("faithfulness_score", 0),
             "struggle_metric": scores.get("struggle_metric", 0),
-            "tool_used": tool_selection
+            "tool_used": tool_selection,
+            "context_relevance_score": scores.get("context_relevance_score", 0)
         }).execute()
     
     
