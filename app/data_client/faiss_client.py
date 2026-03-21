@@ -2,8 +2,9 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from app.data_client.data_loader import dataLoader
 from pathlib import Path
+from app.core.config import settings
 
-FAISS_CACHE = Path("cache/faiss.index")
+FAISS_CACHE = settings.FAISS_INDEX_PATH
 
 def faiss_client():
     

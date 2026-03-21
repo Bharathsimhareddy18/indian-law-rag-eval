@@ -7,7 +7,7 @@ async def pre_process(messages: list, query: str, client: AsyncOpenAI):
 
     # no history, return first message as-is
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-nano",
         messages=[
             {
                 "role": "system",
@@ -28,8 +28,6 @@ async def pre_process(messages: list, query: str, client: AsyncOpenAI):
             }
         ],
         response_format={"type": "json_object"},
-        max_tokens=10000,
-        temperature=0.2
     )
 
     data = json.loads(response.choices[0].message.content) 

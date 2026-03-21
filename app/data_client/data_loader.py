@@ -1,8 +1,9 @@
 from datasets import load_dataset
 from pathlib import Path
 import pickle
+from app.core.config import settings
 
-DATA_CACHE = Path("cache/data_cache.pkl")
+DATA_CACHE = settings.DATA_PATH
 
 
 

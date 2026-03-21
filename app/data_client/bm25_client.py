@@ -2,9 +2,10 @@ from rank_bm25 import BM25Okapi
 from app.data_client.data_loader import dataLoader
 from pathlib import Path
 import pickle 
+from app.core.config import settings
 
 
-BM25_CACHE = Path("cache/bm25.pkl")
+BM25_CACHE = settings.BM25_INDEX_PATH
 
 def bm25_client():
     

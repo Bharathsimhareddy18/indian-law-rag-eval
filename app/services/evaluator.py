@@ -1,7 +1,35 @@
 import json
 from openai import AsyncOpenAI
+from app.models.models import EvaluationResult
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+import openai
+import logging
+from app.core.config import settings
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@retry(
+    wait=wait_random_exponential(min=1, max=30),
+    stop=stop_after_attempt(3),
+    retry=retry_if_exception_type((
+        openai.RateLimitError,
+        openai.APIConnectionError,
+        openai.InternalServerError,
+        openai.APIStatusError
+    )),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True
+)
 async def evaluate_retriever(query: str, answer: str, context: str, client: AsyncOpenAI):
+    
+    logger.info(f"Starting LLM evaluation for query: '{query}'")
     
     eval_prompt = f"""
     You are an impartial AI judge evaluating a RAG system's response.
@@ -10,25 +38,37 @@ async def evaluate_retriever(query: str, answer: str, context: str, client: Asyn
     Retrieved Context: {context}
     System Answer: {answer}
     
-    Evaluate the response on a scale of 1 to 5 for the following metrics:
-    1. goal_completion: Did the answer fully satisfy the user's intent? (5 = Perfect)
-    2. correctness_score: Is the answer factually accurate based on standard knowledge? (5 = Completely correct)
-    3. faithfulness_score: Is the answer derived strictly from the retrieved context? (5 = Perfectly faithful, no hallucinations)
-    4. struggle_metric: Did the system seem to struggle? (e.g., apologizing, failing to find context, giving partial answers). (1 = Confident/No struggle, 5 = Failed/Struggled heavily)
-    5. context_relevance_score: How relevant and useful was the retrieved context for answering the user's query? (1 = Completely irrelevant/useless, 5 = Perfectly relevant and contained the exact information needed)
-    
-    Return ONLY a valid JSON object:
-    {{"goal_completion": int, "correctness_score": int, "faithfulness_score": int, "struggle_metric": int}}
+    Evaluate the response on a scale of 1 to 5 based on the provided schema.
     """
     
-    
-    response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+    try:
+        logger.info("Sending evaluation prompt to OpenAI...")
+        # Use .parse() for native Pydantic support
+        response = await client.beta.chat.completions.parse(
+            model=settings.EVAL_MODEL_NAME, # Note: use a model that supports structured outputs
             messages=[{"role": "system", "content": eval_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.1 
+            response_format=EvaluationResult,
         )
-    
-    scores = json.loads(response.choices[0].message.content)
-    
-    return scores
+        
+        # .parsed is already a validated Pydantic object; convert to dict
+        scores = response.choices[0].message.parsed.model_dump()
+        logger.info(f"Evaluation successful. Scores: {scores}")
+        
+        return scores
+        
+    except openai.OpenAIError as e:
+        logger.error(f"Critical OpenAI API failure during evaluation after retries: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Unexpected error during evaluation parsing: {e}", exc_info=True)
+        
+    # --- The Fallback Safety Net ---
+    # If the LLM completely fails, return 0s so Supabase still logs the interaction
+    # without crashing the background task.
+    logger.warning("Returning default fallback scores (0) due to evaluation failure.")
+    return {
+        "goal_completion": 0,
+        "correctness_score": 0,
+        "faithfulness_score": 0,
+        "struggle_metric": 0,
+        "context_relevance_score": 0
+    }
