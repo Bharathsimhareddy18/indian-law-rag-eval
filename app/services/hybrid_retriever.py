@@ -5,6 +5,8 @@ from app.services.faiss_retriever import faiss_retrieve
 
 logger = logging.getLogger(__name__)
 
+K = 60  # Standard RRF constant
+
 def hybrid_retrieve(
     query: str,
     top_k: int = 5,
@@ -18,43 +20,57 @@ def hybrid_retrieve(
         bm25_results  = bm25_retrieve(query, top_k, bm25, corpus)
         faiss_results = faiss_retrieve(query, top_k, index, corpus, model)
 
-        # merge by doc_id, avoid duplicates
         seen = {}
 
+        # Store BM25 rank and content for each doc
         for result in bm25_results:
             doc_id = result["doc_id"]
             seen[doc_id] = {
                 "doc_id": doc_id,
-                "bm25_score": result["score"],
-                "faiss_score": 0.0,
+                "bm25_rank": result["rank"],   # use rank, not score
+                "faiss_rank": None,            # unknown yet
                 "content": result["content"]
             }
 
+        # Store FAISS rank, merge if already seen
         for result in faiss_results:
             doc_id = result["doc_id"]
             if doc_id in seen:
-                seen[doc_id]["faiss_score"] = result["score"]
+                seen[doc_id]["faiss_rank"] = result["rank"]
             else:
                 seen[doc_id] = {
                     "doc_id": doc_id,
-                    "bm25_score": 0.0,
-                    "faiss_score": result["score"],
+                    "bm25_rank": None,         # not in BM25 results
+                    "faiss_rank": result["rank"],
                     "content": result["content"]
                 }
 
-        # assign rank
+        # Compute RRF score for each doc
+        # If a doc is missing from one retriever, penalize it with top_k + 1
         results = []
-        for rank, doc in enumerate(seen.values(), start=1):
+        for doc in seen.values():
+            bm25_rank  = doc["bm25_rank"]  if doc["bm25_rank"]  is not None else (top_k + 1)
+            faiss_rank = doc["faiss_rank"] if doc["faiss_rank"] is not None else (top_k + 1)
+
+            rrf_score = (1 / (K + bm25_rank)) + (1 / (K + faiss_rank))
+
             results.append({
-                "rank": rank,
                 "doc_id": doc["doc_id"],
-                "bm25_score": doc["bm25_score"],
-                "faiss_score": doc["faiss_score"],
+                "rrf_score": round(rrf_score, 6),
+                "bm25_rank": doc["bm25_rank"],
+                "faiss_rank": doc["faiss_rank"],
                 "content": doc["content"]
             })
 
+        # Sort by RRF score descending, take top_k
+        results = sorted(results, key=lambda x: x["rrf_score"], reverse=True)[:top_k]
+
+        # Assign final rank after sorting
+        for rank, doc in enumerate(results, start=1):
+            doc["rank"] = rank
+
         return results
-        
+
     except Exception as e:
         logger.error(f"Hybrid retrieval merging failed for query '{query}': {e}", exc_info=True)
         return []
