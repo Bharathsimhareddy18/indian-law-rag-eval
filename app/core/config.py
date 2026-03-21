@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import Optional
+from pydantic import Field
 
 class Settings(BaseSettings):
     # --- Project Metadata ---
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
     CHAT_MODEL_NAME: str = "gpt-4.1-mini"
     EVAL_MODEL_NAME: str = "gpt-4.1-mini"
+    DIRECT_DATABASE_URL: Optional[str] = Field(None, env="DIRECT_DATABASE_URL_supabase")
     
     # --- File Paths ---
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent

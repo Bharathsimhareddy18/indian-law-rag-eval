@@ -15,3 +15,6 @@ class EvaluationResult(BaseModel):
     faithfulness_score: int = Field(ge=1, le=5)
     struggle_metric: int = Field(ge=1, le=5)
     context_relevance_score: int = Field(ge=1, le=5)
+    
+class MetricsQuery(BaseModel):
+    user_prompt: str
