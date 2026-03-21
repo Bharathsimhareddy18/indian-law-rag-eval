@@ -16,8 +16,10 @@ from tenacity import (
 import json
 import logging
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 @retry(
     wait=wait_random_exponential(min=1, max=60),
@@ -29,30 +31,30 @@ logger = logging.getLogger(__name__)
         openai.APIStatusError
     )),
     before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=True 
+    reraise=True
 )
 async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, bm25_global, faiss_global, corpus_global, model_global):
 
     logger.info(f"Routing query: '{query}'")
-    
+
     # --- 1. Routing Phase ---
     try:
         tool_decision = await client.chat.completions.create(
             model=settings.CHAT_MODEL_NAME,
             messages=[
                 {
-                    "role": "system", 
-                    "content": """You are an intelligent legal router and query expander. 
-                    
-                    Follow these strict steps:
-                    1. Read the conversation history to resolve any pronouns or vague references in the user's latest query.
-                    2. Transform the user's query into a 'Hypothetical Document'. Rewrite the intent so it reads exactly like a formal Indian legal statute.
-                    3. Select the best retrieval tool and pass this hypothetical legal document text into the tool's 'query' parameter.
-                    4. If the user's query is just a greeting or general wish, DO NOT use any tool."""
+                    "role": "system",
+                    "content": """You are an intelligent legal router and query expander.
+
+Follow these strict steps:
+1. Read the conversation history to resolve any pronouns or vague references in the user's latest query.
+2. Transform the user's query into a 'Hypothetical Document'. Rewrite the intent so it reads exactly like a formal Indian legal statute.
+3. Select the best retrieval tool and pass this hypothetical legal document text into the tool's 'query' parameter.
+4. If the user's query is just a greeting or general wish, DO NOT use any tool."""
                 },
                 {"role": "user", "content": f"History:\n{history}\n\nLatest query: {query}"}
             ],
-            tools = [
+            tools=[
                 {
                     "type": "function",
                     "function": {
@@ -121,16 +123,17 @@ async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, b
         )
     except Exception as e:
         logger.error(f"Critical failure during LLM tool routing: {e}", exc_info=True)
-        raise # Let Tenacity retry this if it's an OpenAI error
+        raise
+
 
     context = " "
     tool_selection = "none"
-    
+
     # --- 2. Tool Parsing & Execution Phase ---
     if tool_decision.choices[0].message.tool_calls:
         tool_call = tool_decision.choices[0].message.tool_calls[0]
         tool_selection = tool_call.function.name
-        
+
         # Guard against LLM outputting malformed JSON
         try:
             arguments = json.loads(tool_call.function.arguments)
@@ -140,7 +143,7 @@ async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, b
             logger.error(f"Failed to parse LLM tool arguments: {e}. Raw output: {tool_call.function.arguments}")
             arguments = {}
             search_query = query
-    
+
         # Guard against Vector DB crashes
         try:
             if tool_selection == 'bm25_retrieve':
@@ -152,9 +155,19 @@ async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, b
             logger.info(f"Successfully retrieved context using {tool_selection}.")
         except Exception as e:
             logger.error(f"Vector DB retrieval failed during {tool_selection}: {e}", exc_info=True)
-            context = " " # Force empty context so generation doesn't break
+            context = " "
     else:
         logger.info("No tool selected by router. Bypassing retrieval.")
+
+    # --- Context Formatting ---
+    # Convert raw list of dicts → clean numbered text for LLM prompt
+    # Raw context list is preserved above for Supabase eval storage
+    if isinstance(context, list) and len(context) > 0:
+        formatted_context = "\n\n".join(
+            [f"[{i+1}] {doc['content']}" for i, doc in enumerate(context)]
+        )
+    else:
+        formatted_context = "No relevant context found."
 
     # --- 3. Generation Phase ---
     logger.info("Initiating LLM response stream.")
@@ -162,18 +175,30 @@ async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, b
         response_stream = await client.chat.completions.create(
             model=settings.CHAT_MODEL_NAME,
             messages=[
-                {"role": "system", "content": """You are an expert Indian Legal Assistant. 
-        Use the provided context to give a professional, detailed answer.
-        
-        Structure your response as follows:
-        1. **Direct Answer**: Start with a clear 1-2 sentence summary.
-        2. **Key Sections**: Use a bulleted list to highlight relevant IPC sections. **Bold** the section numbers.
-        3. **Legal Context**: A paragraph explaining how these apply or any procedural notes.
-        
-        If the user's query is just a greeting or wish, ignore the structure above. Simply introduce yourself as an Indian Legal Assistant and ask how you can help."""},
-                {"role": "user", "content": query},
-                {"role": "system", "content": f"History:\n{history}"},
-                {"role": "system", "content": f"Context:\n{context}"}
+                {
+                    "role": "system",
+                    "content": """You are an expert Indian Legal Assistant.
+Use the provided context to give a professional, detailed answer.
+
+Structure your response as follows:
+1. **Direct Answer**: Start with a clear 1-2 sentence summary.
+2. **Key Sections**: Use a bulleted list to highlight relevant IPC sections. **Bold** the section numbers.
+3. **Legal Context**: A paragraph explaining how these apply or any procedural notes.
+
+If the user's query is just a greeting or wish, ignore the structure above. Simply introduce yourself as an Indian Legal Assistant and ask how you can help."""
+                },
+                {
+                    "role": "system",
+                    "content": f"Conversation History:\n{history}"
+                },
+                {
+                    "role": "system",
+                    "content": f"Retrieved Legal Context:\n{formatted_context}"
+                },
+                {
+                    "role": "user",
+                    "content": query        
+                }
             ],
             stream=True
         )
@@ -181,4 +206,5 @@ async def chat(history: List[Dict[str, Any]], query: str, client: AsyncOpenAI, b
         logger.error(f"Critical failure during LLM stream generation: {e}", exc_info=True)
         raise
 
+    # Return raw context list (not formatted) so eval stores full metadata in Supabase
     return context, tool_selection, response_stream
