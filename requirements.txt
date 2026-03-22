@@ -1,0 +1,20 @@
+# Web Server & Core
+fastapi==0.135.1
+uvicorn==0.42.0
+pydantic==2.12.5
+pydantic-settings==2.13.1
+
+# AI, Embeddings & RAG
+openai==2.29.0
+sentence-transformers==5.3.0
+faiss-cpu==1.13.2
+rank-bm25==0.2.2
+numpy==2.4.3
+
+# Data Ingestion
+datasets==4.8.2
+
+# Database & Utilities
+supabase==2.28.2
+python-dotenv==1.2.2
+tenacity==9.1.4
