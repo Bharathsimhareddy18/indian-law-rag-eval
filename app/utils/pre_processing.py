@@ -15,10 +15,9 @@ async def pre_process(messages: list, query: str, client: AsyncOpenAI):
                 Given a conversation history and the latest user message, return a JSON with:
                 1. standalone_query: rephrase the latest message into a self-contained search query
                 2. history_summary: 1-2 sentence summary of the conversation so far
-
+efbqebfquebfqu
                 Return only valid JSON:
-                 {
-                 "standalone_query": "...",
+                 {q            "standalone_query": "...",
                  "history_summary": "..."
                 }"""
             },
